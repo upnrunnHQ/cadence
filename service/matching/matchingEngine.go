@@ -128,9 +128,10 @@ func (e *matchingEngineImpl) Stop() {
 }
 
 func (e *matchingEngineImpl) getTaskLists(maxCount int) (lists []taskListManager) {
-	e.taskListsLock.Lock()
 	lists = make([]taskListManager, 0, len(e.taskLists))
 	count := 0
+	e.taskListsLock.Lock()
+	defer e.taskListsLock.Unlock()
 	for _, tlMgr := range e.taskLists {
 		lists = append(lists, tlMgr)
 		count++
@@ -138,7 +139,6 @@ func (e *matchingEngineImpl) getTaskLists(maxCount int) (lists []taskListManager
 			break
 		}
 	}
-	e.taskListsLock.Unlock()
 	return
 }
 
@@ -168,13 +168,13 @@ func (e *matchingEngineImpl) getTaskListManagerWithRPS(
 	}
 	e.taskListsLock.RUnlock()
 	mgr := newTaskListManager(e, taskList, e.config, maxDispatchPerSecond)
-	e.taskListsLock.Lock()
+	e.taskListsLock.RLock()
 	if result, ok := e.taskLists[*taskList]; ok {
-		e.taskListsLock.Unlock()
+		e.taskListsLock.RUnlock()
 		return result, nil
 	}
-	e.taskLists[*taskList] = mgr
-	e.taskListsLock.Unlock()
+	e.taskListsLock.RUnlock()
+	e.updateTaskList(taskList, mgr)
 	logging.LogTaskListLoadingEvent(e.logger, taskList.taskListName, taskList.taskType)
 	err := mgr.Start()
 	if err != nil {
@@ -183,6 +183,12 @@ func (e *matchingEngineImpl) getTaskListManagerWithRPS(
 	}
 	logging.LogTaskListLoadedEvent(e.logger, taskList.taskListName, taskList.taskType)
 	return mgr, nil
+}
+
+func (e *matchingEngineImpl) updateTaskList(taskList *taskListID, mgr taskListManager) {
+	e.taskListsLock.Lock()
+	defer e.taskListsLock.Unlock()
+	e.taskLists[*taskList] = mgr
 }
 
 func (e *matchingEngineImpl) removeTaskListManager(id *taskListID) {
